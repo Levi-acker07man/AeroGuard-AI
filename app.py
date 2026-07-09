@@ -1,57 +1,90 @@
-import streamlit as st
+import os
 import numpy as np
 import joblib
-import tensorflow as tf
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from tensorflow.keras.models import load_model
 
-# --- Page Config ---
-st.set_page_config(page_title="AeroGuard AQI", page_icon="🌍", layout="centered")
+app = Flask(__name__)
+# Allow your frontend friend's Vercel/Cloudflare domains to fetch this API.
+# Swap "*" for the real domain(s) once you have them, e.g.
+# CORS(app, resources={r"/*": {"origins": ["https://your-app.vercel.app"]}})
+CORS(app, resources={r"/*": {"origins": "*"}})
 
-# --- Header ---
-st.title("🌍 AeroGuard: Smart City AQI Predictor")
-st.write("Adjust the environmental factors below to predict the Air Quality Index using your original Keras model.")
+MODEL_PATH = os.path.join(os.path.dirname(__file__), "aqi_model.keras")
+FEATURE_SCALER_PATH = os.path.join(os.path.dirname(__file__), "feature_scaler.pkl")
+TARGET_SCALER_PATH = os.path.join(os.path.dirname(__file__), "target_scaler.pkl")
 
-# --- Load Assets safely ---
-@st.cache_resource
-def load_assets():
-    # Load the native Keras model (compile=False skips training setup)
-    model = tf.keras.models.load_model("aeroguard_lstm_engine.keras", compile=False)
-    scaler = joblib.load("aqi_pipeline_scaler.pkl")
-    return model, scaler
+LOOKBACK = 48
+FORECAST = 24
+TARGET_INDEX = 1  # index of 'Target_Pollutant' in the 13-column feature order below
 
-try:
-    model, scaler = load_assets()
-except Exception as e:
-    st.error(f"⚠️ Error loading Keras model: {e}")
-    st.stop()
+# Must match the exact column order used when training (df.columns after cleaning)
+FEATURE_ORDER = [
+    "CO(GT)", "Target_Pollutant", "NMHC(GT)", "C6H6(GT)", "PT08.S2(NMHC)",
+    "NOx(GT)", "PT08.S3(NOx)", "NO2(GT)", "PT08.S4(NO2)", "PT08.S5(O3)",
+    "T", "RH", "AH",
+]
 
-# --- UI Sliders ---
-st.markdown("### 📊 Environmental Parameters")
-traffic = st.slider("🚗 Traffic Density", 10.0, 100.0, 50.0)
-factory = st.slider("🏭 Factory Emissions", 20.0, 150.0, 60.0)
-wind = st.slider("💨 Wind Speed", 2.0, 35.0, 10.0)
-temp = st.slider("🌡️ Temperature (°C)", 15.0, 45.0, 25.0)
+print("Loading model and scalers...")
+model = load_model(MODEL_PATH)
+feature_scaler = joblib.load(FEATURE_SCALER_PATH)
+target_scaler = joblib.load(TARGET_SCALER_PATH)
+print("Model and scalers loaded.")
 
-# --- Prediction Logic ---
-if st.button("🔮 Predict AQI", use_container_width=True):
-    with st.spinner("Running TensorFlow Inference..."):
-        # 1. Format and scale features
-        features = np.array([[traffic, factory, wind, temp]])
-        scaled_features = scaler.transform(features)
-        
-        # 2. Reshape for LSTM: (batch_size, sequence_length, features)
-        input_data = np.reshape(scaled_features, (1, 1, 4)).astype(np.float32)
-        
-        # 3. Run prediction
-        raw_prediction = model.predict(input_data)
-        prediction = float(raw_prediction[0][0])
-        
-        # --- Display Results ---
-        st.markdown("---")
-        st.subheader("Predicted Air Quality Index")
-        
-        if prediction <= 50:
-            st.success(f"## 🟢 {prediction:.1f} (Good)")
-        elif prediction <= 100:
-            st.warning(f"## 🟡 {prediction:.1f} (Moderate)")
-        else:
-            st.error(f"## 🔴 {prediction:.1f} (Poor/Hazardous)")
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"}), 200
+
+
+@app.route("/predict", methods=["POST"])
+def predict():
+    """
+    Expects JSON body:
+    {
+      "sequence": [
+        {"CO(GT)": 2.1, "Target_Pollutant": 1150, "NMHC(GT)": 120, "C6H6(GT)": 9.2,
+         "PT08.S2(NMHC)": 950, "NOx(GT)": 180, "PT08.S3(NOx)": 900, "NO2(GT)": 110,
+         "PT08.S4(NO2)": 1500, "PT08.S5(O3)": 1000, "T": 18.2, "RH": 45.0, "AH": 0.9},
+        ... exactly 48 of these objects, oldest hour first, most recent hour last ...
+      ]
+    }
+
+    Returns:
+    {
+      "predictions": [1180.4, 1172.1, ..., 24 values],
+      "unit": "Target_Pollutant scale (same units as training data)"
+    }
+    """
+    data = request.get_json(force=True)
+    if not data or "sequence" not in data:
+        return jsonify({"error": "Missing 'sequence' in request body"}), 400
+
+    sequence = data["sequence"]
+    if len(sequence) != LOOKBACK:
+        return jsonify({
+            "error": f"'sequence' must contain exactly {LOOKBACK} hourly records, got {len(sequence)}"
+        }), 400
+
+    try:
+        raw = np.array([[row[col] for col in FEATURE_ORDER] for row in sequence])
+    except KeyError as e:
+        return jsonify({"error": f"Missing feature in one of the records: {e}"}), 400
+
+    scaled = feature_scaler.transform(raw)
+    model_input = scaled.reshape(1, LOOKBACK, len(FEATURE_ORDER))
+
+    pred_scaled = model.predict(model_input)[0]  # shape (24,)
+
+    pred_real = target_scaler.inverse_transform(pred_scaled.reshape(-1, 1)).flatten()
+
+    return jsonify({
+        "predictions": pred_real.tolist(),
+        "unit": "Target_Pollutant scale (same units as training data)"
+    }), 200
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
