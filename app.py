@@ -17,12 +17,11 @@ st.markdown("Powered by an 88% Accuracy CNN-BiLSTM Hybrid Engine.")
 if 'active_chart' not in st.session_state:
     st.session_state.active_chart = 'Area'
 
-# --- Load Assets Safely ---
+# --- Load Assets ---
 @st.cache_resource
 def load_assets():
     model = tf.keras.models.load_model("aqi_model.keras", compile=False)
     
-    # Smart Loader: Tries to find whatever feature scaler you have uploaded
     scaler_name = "feature_scaler.pkl"
     if os.path.exists("feature_scaler_v3.pkl"): scaler_name = "feature_scaler_v3.pkl"
     elif os.path.exists("feature_scaler_v2.pkl"): scaler_name = "feature_scaler_v2.pkl"
@@ -65,27 +64,20 @@ try:
         full_row[:13] *= (1 + (hour_sin * 0.15))
         historical_window[i, :] = full_row
     
-    # 🌟 THE INDESTRUCTIBLE BYPASS 🌟
     try:
-        # Plan A: Try to scale all 17 features (If you uploaded the perfect scaler)
         scaled_window = feature_scaler.transform(historical_window)
     except ValueError:
-        # Plan B: If the scaler stubbornly expects 13 features, we hack it!
-        scaled_13 = feature_scaler.transform(historical_window[:, :13]) # Scale the 13
-        time_4 = historical_window[:, 13:] # Extract the 4 time columns
-        time_4_normalized = (time_4 + 1.0) / 2.0 # Manually scale sine waves to 0-1
-        scaled_window = np.concatenate((scaled_13, time_4_normalized), axis=1) # Glue them together!
+        scaled_13 = feature_scaler.transform(historical_window[:, :13])
+        time_4 = historical_window[:, 13:]
+        time_4_normalized = (time_4 + 1.0) / 2.0
+        scaled_window = np.concatenate((scaled_13, time_4_normalized), axis=1)
     
-   input_data = np.reshape(scaled_window, (1, 48, 17)).astype(np.float32)
+    input_data = np.reshape(scaled_window, (1, 48, 17)).astype(np.float32)
     
-    # 🌟 NEW: DYNAMIC MODEL ADAPTER 🌟
-    # Dynamically check how many features the uploaded .keras model expects (13 or 17)
-    expected_features = model.input_shape[-1] 
-    
-    # Instantly slice the data to perfectly match the model's brain
+    # 🌟 Dynamic Model Adapter 🌟
+    expected_features = model.input_shape[-1]
     final_input = input_data[:, :, :expected_features]
     
-    # Predict using the adapted data!
     raw_sensor_forecast = target_scaler.inverse_transform(model.predict(final_input, verbose=0)[0].reshape(-1, 1)).flatten()
     
     # Mathematical AQI Conversion & Hard Ceiling
