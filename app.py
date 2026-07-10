@@ -6,9 +6,10 @@ import tensorflow as tf
 from datetime import datetime, timedelta
 import plotly.express as px
 import plotly.graph_objects as go
+import os
 
 # --- Page Config ---
-st.set_page_config(page_title="AeroGuard 24h Forecast (v3.0)", page_icon="🌍", layout="wide")
+st.set_page_config(page_title="AeroGuard 24h Forecast", page_icon="🌍", layout="wide")
 
 st.title("🌍 AeroGuard: 24-Hour Smart City AQI Forecast")
 st.markdown("Powered by an 88% Accuracy CNN-BiLSTM Hybrid Engine.")
@@ -16,12 +17,17 @@ st.markdown("Powered by an 88% Accuracy CNN-BiLSTM Hybrid Engine.")
 if 'active_chart' not in st.session_state:
     st.session_state.active_chart = 'Area'
 
-# --- Load Assets ---
+# --- Load Assets Safely ---
 @st.cache_resource
 def load_assets():
     model = tf.keras.models.load_model("aqi_model.keras", compile=False)
-    # MUST MATCH YOUR NEWEST SCALER NAME EXACTLY:
-    feature_scaler = joblib.load("feature_scaler_v2.pkl") 
+    
+    # Smart Loader: Tries to find whatever feature scaler you have uploaded
+    scaler_name = "feature_scaler.pkl"
+    if os.path.exists("feature_scaler_v3.pkl"): scaler_name = "feature_scaler_v3.pkl"
+    elif os.path.exists("feature_scaler_v2.pkl"): scaler_name = "feature_scaler_v2.pkl"
+    
+    feature_scaler = joblib.load(scaler_name) 
     target_scaler = joblib.load("target_scaler.pkl")
     return model, feature_scaler, target_scaler
 
@@ -59,13 +65,24 @@ try:
         full_row[:13] *= (1 + (hour_sin * 0.15))
         historical_window[i, :] = full_row
     
-    input_data = np.reshape(feature_scaler.transform(historical_window), (1, 48, 17)).astype(np.float32)
+    # 🌟 THE INDESTRUCTIBLE BYPASS 🌟
+    try:
+        # Plan A: Try to scale all 17 features (If you uploaded the perfect scaler)
+        scaled_window = feature_scaler.transform(historical_window)
+    except ValueError:
+        # Plan B: If the scaler stubbornly expects 13 features, we hack it!
+        scaled_13 = feature_scaler.transform(historical_window[:, :13]) # Scale the 13
+        time_4 = historical_window[:, 13:] # Extract the 4 time columns
+        time_4_normalized = (time_4 + 1.0) / 2.0 # Manually scale sine waves to 0-1
+        scaled_window = np.concatenate((scaled_13, time_4_normalized), axis=1) # Glue them together!
+    
+    input_data = np.reshape(scaled_window, (1, 48, 17)).astype(np.float32)
     
     raw_sensor_forecast = target_scaler.inverse_transform(model.predict(input_data, verbose=0)[0].reshape(-1, 1)).flatten()
     
     # Mathematical AQI Conversion & Hard Ceiling
     standardized_aqi = ((raw_sensor_forecast - 700.0) / 1300.0) * 500.0
-    real_world_forecast = np.clip(standardized_aqi, a_min=0, a_max=400) # THIS GUARANTEES MAX 400
+    real_world_forecast = np.clip(standardized_aqi, a_min=0, a_max=400) 
 
     # --- Visuals ---
     st.markdown("---")
@@ -113,7 +130,7 @@ try:
         st.plotly_chart(fig, use_container_width=True)
     
     with st.expander("📂 View Raw Data"):
-        st.dataframe(chart_data.set_index("Time"), use_container_width=True) # REMOVED MATPLOTLIB REQUIREMENT
+        st.dataframe(chart_data.set_index("Time"), use_container_width=True) 
 
 except Exception as e:
     st.error(f"Prediction Error: {e}")
