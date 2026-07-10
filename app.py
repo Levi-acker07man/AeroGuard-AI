@@ -8,7 +8,6 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 
-# --- Page Config ---
 st.set_page_config(page_title="AeroGuard 24h Forecast", page_icon="🌍", layout="wide")
 
 st.title("🌍 AeroGuard: 24-Hour Smart City AQI Forecast")
@@ -17,7 +16,6 @@ st.markdown("Powered by an 88% Accuracy CNN-BiLSTM Hybrid Engine.")
 if 'active_chart' not in st.session_state:
     st.session_state.active_chart = 'Area'
 
-# --- Load Assets ---
 @st.cache_resource
 def load_assets():
     model = tf.keras.models.load_model("aqi_model.keras", compile=False)
