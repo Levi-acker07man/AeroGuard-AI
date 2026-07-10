@@ -13,13 +13,12 @@ st.title("🌍 AeroGuard: 24-Hour Smart City AQI Forecast")
 st.markdown("Powered by BiLSTM Deep Learning and real-time UCI sensor data.")
 
 # --- Load Assets Safely ---
+# --- Load Assets Safely ---
 @st.cache_resource
 def load_assets():
-    # Load the trained 48-timestep, 13-feature model
     model = tf.keras.models.load_model("aqi_model.keras", compile=False)
-    # Load the 13-column feature scaler
-    feature_scaler = joblib.load("feature_scaler.pkl")
-    # Load the 1-column target scaler
+    # CHANGE THIS LINE TO MATCH THE NEW FILE:
+    feature_scaler = joblib.load("feature_scaler_v2.pkl")
     target_scaler = joblib.load("target_scaler.pkl")
     return model, feature_scaler, target_scaler
 
