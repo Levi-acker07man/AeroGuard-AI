@@ -21,7 +21,7 @@ if 'active_chart' not in st.session_state:
 def load_assets():
     model = tf.keras.models.load_model("aqi_model.keras", compile=False)
     # MUST MATCH YOUR NEWEST SCALER NAME EXACTLY:
-    feature_scaler = joblib.load("feature_scaler_v3.pkl") 
+    feature_scaler = joblib.load("feature_scaler_v2.pkl") 
     target_scaler = joblib.load("target_scaler.pkl")
     return model, feature_scaler, target_scaler
 
