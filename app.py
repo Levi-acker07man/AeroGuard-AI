@@ -76,9 +76,17 @@ try:
         time_4_normalized = (time_4 + 1.0) / 2.0 # Manually scale sine waves to 0-1
         scaled_window = np.concatenate((scaled_13, time_4_normalized), axis=1) # Glue them together!
     
-    input_data = np.reshape(scaled_window, (1, 48, 17)).astype(np.float32)
+   input_data = np.reshape(scaled_window, (1, 48, 17)).astype(np.float32)
     
-    raw_sensor_forecast = target_scaler.inverse_transform(model.predict(input_data, verbose=0)[0].reshape(-1, 1)).flatten()
+    # 🌟 NEW: DYNAMIC MODEL ADAPTER 🌟
+    # Dynamically check how many features the uploaded .keras model expects (13 or 17)
+    expected_features = model.input_shape[-1] 
+    
+    # Instantly slice the data to perfectly match the model's brain
+    final_input = input_data[:, :, :expected_features]
+    
+    # Predict using the adapted data!
+    raw_sensor_forecast = target_scaler.inverse_transform(model.predict(final_input, verbose=0)[0].reshape(-1, 1)).flatten()
     
     # Mathematical AQI Conversion & Hard Ceiling
     standardized_aqi = ((raw_sensor_forecast - 700.0) / 1300.0) * 500.0
